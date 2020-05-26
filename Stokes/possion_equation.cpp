@@ -3,16 +3,15 @@
  * @author Heyu Wang <scshw@cslin107.csunix.comp.leeds.ac.uk>
  * @date   Mon May 19 13:19:19 2014
  * 
- * @brief 一个例子, 如何脱离 AFEPack 的 BilinearOperator 结构, 自己构建
- * 一个刚度矩阵. 目的是进一步在 NS 方程混合元求解等较为复杂的问题中直接
- * 构建大刚度矩阵. 甚至可以直接替换 deal.II 的矩阵结构. 建议对比
- * AFEPack 中 Possion 方程的例子看.
+ * @brief 一个Taylor-Hood混合元(P1-P2)计算Stokes方程的例子。一级预处理
+ * 用了 Schur-Complement，二级预处理是 AMG。因此整体效率接近 AMG。
  * 
  * 
  */
 
 #include <iostream>
 #include <fstream>
+#include <limits>
 
 #include <AFEPack/AMGSolver.h>
 #include <AFEPack/Geometry.h>
@@ -55,15 +54,16 @@ private:
     const SparseMatrix<double> *Ax; /**< 预处理矩阵各分块. */
     const SparseMatrix<double> *Ay;
     const SparseMatrix<double> *Q;
-    std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG> Amg_preconditioner;
+    std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG> Amg_preconditionerX;
+    std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG> Amg_preconditionerY;
     std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG> Amg_preconditionerQ;
 
 public:
     StokesPreconditioner()
-    {};
+	{};
 
     ~StokesPreconditioner()
-    {};
+	{};
 
     /** 
      * 预处理子初始化.
@@ -75,15 +75,17 @@ public:
     void initialize (const SparseMatrix<double> &_stiff_vx, 
 		     const SparseMatrix<double> &_stiff_vy, 
 		     const SparseMatrix<double> &_mass_p_diag) 
-    {
-	Ax = &_stiff_vx;
-	Ay = &_stiff_vy;
-	Q = &_mass_p_diag;
-	Amg_preconditioner = std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG>(new TrilinosWrappers::PreconditionAMG());
-	Amg_preconditioner->initialize(*Ax);
-	Amg_preconditionerQ = std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG>(new TrilinosWrappers::PreconditionAMG());
-	Amg_preconditionerQ->initialize(*Q);
-    };
+	{
+	    Ax = &_stiff_vx;
+	    Ay = &_stiff_vy;
+	    Q = &_mass_p_diag;
+	    Amg_preconditionerX = std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG>(new TrilinosWrappers::PreconditionAMG());
+	    Amg_preconditionerX->initialize(*Ax);
+	    Amg_preconditionerY = std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG>(new TrilinosWrappers::PreconditionAMG());
+	    Amg_preconditionerY->initialize(*Ax);
+	    Amg_preconditionerQ = std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG>(new TrilinosWrappers::PreconditionAMG());
+	    Amg_preconditionerQ->initialize(*Q);
+	};
     /** 
      * 实际估值 dst = M^{-1}src. 
      * 
@@ -120,8 +122,8 @@ void StokesPreconditioner::vmult (Vector<double> &dst,
     SolverControl solver_controlQ (100, 1e-6, false, false);
     SolverCG<> solverQ (solver_controlQ);
     
-    solver.solve (*Ax, d0, s0, *Amg_preconditioner);
-    solver.solve (*Ay, d1, s1, *Amg_preconditioner);
+    solver.solve (*Ax, d0, s0, *Amg_preconditionerX);
+    solver.solve (*Ay, d1, s1, *Amg_preconditionerY);
     solverQ.solve (*Q, d2, s2, *Amg_preconditionerQ);
 
     for (int i = 0; i < n_dof_v; ++i)
@@ -353,12 +355,12 @@ int main(int argc, char * argv[])
                 SparseMatrix<double>::iterator col_iterator = system_matrix.begin(k);   
                 SparseMatrix<double>::iterator col_end = system_matrix.end(k);   
     	    	for (++col_iterator; col_iterator != col_end; ++col_iterator)
-    			if (col_iterator->column() == i)
-    			    break;
+		    if (col_iterator->column() == i)
+			break;
     		if (col_iterator == col_end)
     		{
-    			std::cerr << "Error!" << std::endl;
-    			exit(-1);
+		    std::cerr << "Error!" << std::endl;
+		    exit(-1);
     		}
     		rhs(k) -= col_iterator->value() * bnd_value; 
     		col_iterator->value() = 0.0;	
@@ -376,13 +378,13 @@ int main(int argc, char * argv[])
                 SparseMatrix<double>::iterator col_end = system_matrix.end(k);   
     	    	for (++col_iterator; col_iterator != col_end; ++col_iterator)
 		{
-    	    		if (col_iterator->column() == i + n_v)
-    	    		    break;
+		    if (col_iterator->column() == i + n_v)
+			break;
 		}
     	    	if (col_iterator == col_end)
     	    	{
-    	    		std::cerr << "Error!" << std::endl;
-    	    		exit(-1);
+		    std::cerr << "Error!" << std::endl;
+		    exit(-1);
     	    	}
     	    	rhs(k) -= col_iterator->value() * bnd_value; 
     	    	col_iterator->value() = 0.0;	
@@ -402,12 +404,12 @@ int main(int argc, char * argv[])
                 SparseMatrix<double>::iterator col_iterator = system_matrix.begin(k);   
                 SparseMatrix<double>::iterator col_end = system_matrix.end(k);   
     	    	for (++col_iterator; col_iterator != col_end; ++col_iterator)
-    			if (col_iterator->column() == i)
-    			    break;
+		    if (col_iterator->column() == i)
+			break;
     		if (col_iterator == col_end)
     		{
-    			std::cerr << "Error!" << std::endl;
-    			exit(-1);
+		    std::cerr << "Error!" << std::endl;
+		    exit(-1);
     		}
     		rhs(k) -= col_iterator->value() * bnd_value; 
     		col_iterator->value() = 0.0;	
@@ -424,12 +426,12 @@ int main(int argc, char * argv[])
                 SparseMatrix<double>::iterator col_iterator = system_matrix.begin(k);   
                 SparseMatrix<double>::iterator col_end = system_matrix.end(k);   
     	    	for (++col_iterator; col_iterator != col_end; ++col_iterator)
-    			if (col_iterator->column() == i + n_v)
-    			    break;
+		    if (col_iterator->column() == i + n_v)
+			break;
     		if (col_iterator == col_end)
     		{
-    			std::cerr << "Error!" << std::endl;
-    			exit(-1);
+		    std::cerr << "Error!" << std::endl;
+		    exit(-1);
     		}
     		rhs(k) -= col_iterator->value() * bnd_value; 
     		col_iterator->value() = 0.0;	
@@ -437,16 +439,16 @@ int main(int argc, char * argv[])
     	}	
     }		
     /*
-    std::cout.setf(std::ios::fixed);
-    std::cout.precision(5);
-    std::cout << "A = [" << std::endl;
-    for (int i = 0; i < 2 * n_v + n_p; i++)
-    {
-    	for (int j = 0; j < 2 * n_v + n_p; j++)
-    	    std::cout << system_matrix.el(i, j) << " ";
-    	std::cout << std::endl;
-    }
-    std::cout << "];";
+      std::cout.setf(std::ios::fixed);
+      std::cout.precision(5);
+      std::cout << "A = [" << std::endl;
+      for (int i = 0; i < 2 * n_v + n_p; i++)
+      {
+      for (int j = 0; j < 2 * n_v + n_p; j++)
+      std::cout << system_matrix.el(i, j) << " ";
+      std::cout << std::endl;
+      }
+      std::cout << "];";
     */
 
     std::vector<unsigned int> max_couple_vv(n_v);
@@ -579,41 +581,41 @@ int main(int argc, char * argv[])
 	vyp.add(i - n_v, vp_cols, vp_vals);
     }
     /*
-    std::cout << "Vx = [" << std::endl;
-    for (int i = 0; i < n_v; i++)
-    {
-    	for (int j = 0; j < n_v; j++)
-    	    std::cout << vxvx.el(i, j) << " ";
-    	std::cout << std::endl;
-    }
-    std::cout << "];";
+      std::cout << "Vx = [" << std::endl;
+      for (int i = 0; i < n_v; i++)
+      {
+      for (int j = 0; j < n_v; j++)
+      std::cout << vxvx.el(i, j) << " ";
+      std::cout << std::endl;
+      }
+      std::cout << "];";
 
-    std::cout << "Px = [" << std::endl;
-    for (int i = 0; i < n_v; i++)
-    {
-    	for (int j = 0; j < n_p; j++)
-    	    std::cout << vxp.el(i, j) << " ";
-    	std::cout << std::endl;
-    }
-    std::cout << "];";
+      std::cout << "Px = [" << std::endl;
+      for (int i = 0; i < n_v; i++)
+      {
+      for (int j = 0; j < n_p; j++)
+      std::cout << vxp.el(i, j) << " ";
+      std::cout << std::endl;
+      }
+      std::cout << "];";
 
-    std::cout << "Vy = [" << std::endl;
-    for (int i = 0; i < n_v; i++)
-    {
-    	for (int j = 0; j < n_v; j++)
-    	    std::cout << vxvx.el(i, j) << " ";
-    	std::cout << std::endl;
-    }
-    std::cout << "];";
+      std::cout << "Vy = [" << std::endl;
+      for (int i = 0; i < n_v; i++)
+      {
+      for (int j = 0; j < n_v; j++)
+      std::cout << vxvx.el(i, j) << " ";
+      std::cout << std::endl;
+      }
+      std::cout << "];";
 
-    std::cout << "Py = [" << std::endl;
-    for (int i = 0; i < n_v; i++)
-    {
-    	for (int j = 0; j < n_p; j++)
-    	    std::cout << vyp.el(i, j) << " ";
-    	std::cout << std::endl;
-    }
-    std::cout << "];";
+      std::cout << "Py = [" << std::endl;
+      for (int i = 0; i < n_v; i++)
+      {
+      for (int j = 0; j < n_p; j++)
+      std::cout << vyp.el(i, j) << " ";
+      std::cout << std::endl;
+      }
+      std::cout << "];";
     */
     std::vector<unsigned int> max_couple_pp(n_p);
     
@@ -665,8 +667,9 @@ int main(int argc, char * argv[])
 
     StokesPreconditioner preconditioner;
     preconditioner.initialize(vxvx, vyvy, mass_p);
+    double tol = std::numeric_limits<double>::epsilon() * total_n_dof;
     
-    SolverControl solver_control (1000000, 1e-12, false);
+    SolverControl solver_control (1000000, tol, false);
 //  求解器的选择, Stokes系统是对称不定的, 不能采用cg, 如果使用GMRES, 效率比较低.
 //    SolverGMRES<Vector<double> > gmres(solver_control);
 //    gmres.solve (system_matrix, solution, rhs, PreconditionIdentity());	

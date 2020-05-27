@@ -3,10 +3,7 @@
  * @author Heyu Wang <scshw@cslin107.csunix.comp.leeds.ac.uk>
  * @date   Mon May 19 13:19:19 2014
  * 
- * @brief 一个例子, 如何脱离 AFEPack 的 BilinearOperator 结构, 自己构建
- * 一个刚度矩阵. 目的是进一步在 NS 方程混合元求解等较为复杂的问题中直接
- * 构建大刚度矩阵. 甚至可以直接替换 deal.II 的矩阵结构. 建议对比
- * AFEPack 中 Possion 方程的例子看.
+ * @brief 求解 Navier-Stokes 方程稳定解的算例。配置是 2D 方腔流。
  * 
  * 
  */
@@ -42,6 +39,7 @@
 #include <lac/trilinos_precondition.h>
 
 #define PI (4.0*atan(1.0))
+/// vis 是动力学粘性系数。在单位正方形上 vis = 0.01 大约是 RE = 100.
 #define vis 0.01
 
 //#define N 2
@@ -60,7 +58,8 @@ private:
     const SparseMatrix<double> *Ax; /**< 预处理矩阵各分块. */
     const SparseMatrix<double> *Ay;
     const SparseMatrix<double> *Q;
-    std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG> Amg_preconditioner;
+    std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG> Amg_preconditionerX;
+    std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG> Amg_preconditionerY;
     std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG> Amg_preconditionerQ;
 
 public:
@@ -84,8 +83,10 @@ public:
 	    Ax = &_stiff_vx;
 	    Ay = &_stiff_vy;
 	    Q = &_mass_p_diag;
-	    Amg_preconditioner = std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG>(new TrilinosWrappers::PreconditionAMG());
-	    Amg_preconditioner->initialize(*Ax);
+	    Amg_preconditionerX = std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG>(new TrilinosWrappers::PreconditionAMG());
+	    Amg_preconditionerX->initialize(*Ax);
+	    Amg_preconditionerY = std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG>(new TrilinosWrappers::PreconditionAMG());
+	    Amg_preconditionerY->initialize(*Ay);
 	    Amg_preconditionerQ = std_cxx1x::shared_ptr<TrilinosWrappers::PreconditionAMG>(new TrilinosWrappers::PreconditionAMG());
 	    Amg_preconditionerQ->initialize(*Q);
 	};
@@ -124,10 +125,11 @@ void StokesPreconditioner::vmult (Vector<double> &dst,
 
     SolverControl solver_controlQ (100, 1e-6, false, false);
     SolverCG<> solverQ (solver_controlQ);
-    
-    solver.solve (*Ax, d0, s0, *Amg_preconditioner);
-    solver.solve (*Ay, d1, s1, *Amg_preconditioner);
+    std::cout << "Stokes precondition applying..." << std::endl;
+    solver.solve (*Ax, d0, s0, *Amg_preconditionerX);
+    solver.solve (*Ay, d1, s1, *Amg_preconditionerY);
     solverQ.solve (*Q, d2, s2, *Amg_preconditionerQ);
+    std::cout << "Stokes precondition completed." << std::endl;
 
     for (int i = 0; i < n_dof_v; ++i)
 	dst(i) = d0(i);
@@ -139,10 +141,10 @@ void StokesPreconditioner::vmult (Vector<double> &dst,
 
 int main(int argc, char * argv[])
 {
-   
-
-    
-    Utilities::MPI::MPI_InitFinalize mpi_initialization (argc, argv, 1);
+    /// 以下和 Stoke 问题一样，也采用了 Taylor-Hood 元（P2 - P1）。 这
+    /// 里由于最终非线性迭代没有使用 AMG，因此开启了多核并行加速。这里
+    /// 的参数应该和物理核数量一致。
+    Utilities::MPI::MPI_InitFinalize mpi_initialization (argc, argv, 4);
     HGeometryTree<DIM> h_tree;
     h_tree.readEasyMesh(argv[1]);
     IrregularMesh<DIM> *irregular_mesh_c; /**< 计算网格. 可构建高阶单元.*/
@@ -224,8 +226,7 @@ int main(int argc, char * argv[])
     //
     // 统计非零元个数，用以建立稀疏矩阵结构.
     //
-
-    
+   
     int n_v = fem_space_v.n_dof();
     int n_p = fem_space_p.n_dof();
     int total_n_dof = 2 * n_v + n_p;
@@ -307,6 +308,8 @@ int main(int argc, char * argv[])
 	Element<double, DIM>& element_p = fem_space_p.element(the_element->index());
 	const std::vector<int>& element_dof_p = element_p.dof();
 	std::vector<std::vector<double> > basis_function_value_p = element_p.basis_function_value(q_point);
+	/// NS 的矩阵比 Stokes 的矩阵要复杂，而且新增的对流项严重影响
+	/// 了矩阵的性质。
 	for (int l = 0; l < n_quadrature_point; ++l)
 	{
 	    double Jxw = quad_info.weight(l) * jacobian[l] * volume;
@@ -339,7 +342,9 @@ int main(int argc, char * argv[])
     }
 
     //
-    // 接下来处理边界条件，改变右端项
+    // 接下来处理边界条件，改变右端项，对块矩阵施加边界条件比较复杂。
+    // 这里同样利用了矩阵的对称结构。尽管矩阵本身没有对称性，但非零元
+    // 结构是对称的。
     //
     
     Vector<double> solution(total_n_dof);
@@ -461,19 +466,7 @@ int main(int argc, char * argv[])
     	}	
     }		
 	
-    // 到此为止Ax=b的问题已经建立完毕
-    /*
-      std::cout.setf(std::ios::fixed);
-      std::cout.precision(5);
-      std::cout << "A = [" << std::endl;
-      for (int i = 0; i < 2 * n_v + n_p; i++)
-      {
-      for (int j = 0; j < 2 * n_v + n_p; j++)
-      std::cout << system_matrix.el(i, j) << " ";
-      std::cout << std::endl;
-      }
-      std::cout << "];";
-    */
+    /// 到此为止Ax=b的问题已经建立完毕。
 
     std::vector<unsigned int> max_couple_vv(n_v);
     std::vector<unsigned int> max_couple_vp(n_v);
@@ -689,7 +682,7 @@ int main(int argc, char * argv[])
     }
 
 
-// 之前的工作有何作用？
+/// 这里首先求解一个 Stokes 问题的解，作为非线性迭代的初值。
     StokesPreconditioner preconditioner;
     preconditioner.initialize(vxvx, vyvy, mass_p);
     
@@ -705,15 +698,17 @@ int main(int argc, char * argv[])
 //  更好的求解器是专门处理对称不定系统的MinRes, 效率相对GMRES好很多.     
     SolverMinRes<Vector<double> > minres(solver_control);
 //  然而不做任何预处理仍然是低效的.    
-    minres.solve (system_matrix, solution, rhs, PreconditionIdentity());
+//    minres.solve (system_matrix, solution, rhs, PreconditionIdentity());
 //  在最基本的情况下, 至少也应该做一个MIC预处理. 由于系统矩阵不定且右下角有零块, 因此
 //  必须对预处理阵的对角元加强以确保MIC能够完成. 对角强化参数是一个经验参数.     
-//    SparseMIC<double> mic;
-//    SparseMIC<double>::AdditionalData ad;
-//    ad.strengthen_diagonal = 0.5;
-//    mic.initialize(system_matrix, ad);
-//    minres.solve (system_matrix, solution, rhs, preconditioner);	
+    SparseMIC<double> mic;
+    SparseMIC<double>::AdditionalData ad;
+    ad.strengthen_diagonal = 0.5;
+    mic.initialize(system_matrix, ad);
+    std::cout << "Stokes equations solving..." << std::endl;
+    minres.solve (system_matrix, solution, rhs, preconditioner);	
 //    minres.solve (system_matrix, solution, rhs, mic);	
+    std::cout << "Stokes equations solved..." << std::endl;
     for (int i = 0; i < n_v; i++)
 	vx(i) = solution(i);
     for (int i = n_v; i < 2 * n_v; i++)
@@ -813,18 +808,11 @@ int main(int argc, char * argv[])
     SparseMatrix<double> system_matrixs(sp_system_matrixs);
     system_matrixs.reinit(sp_system_matrixs);
 
-    //the sp matrix has been created
-
-    //now we need to get the equation Adx=db
-    //as A and db is changed with u
-    //so we need a circle here
-
+    /// 构建非线性 Newton 迭代。
     int step = 0;
     double error = 1e-12;
     double res = 1;
     double h = 0.1;
-    // how to compare the res? 
-    // begin circle
     while (res > error)
     {
 
@@ -954,8 +942,9 @@ int main(int argc, char * argv[])
 		}
 	    }
 	}
-
 	
+	/// Newton 迭代过程中也需要施加边界条件，因为边界条件实际上是
+	/// 精确的，所以只要确保边界上增量为零即可。
 	for (int i = 0; i < n_v; i++)
 	{
 	    FEMSpace<double, DIM>::dof_info_t dof = fem_space_v.dofInfo(i);
@@ -1061,15 +1050,18 @@ int main(int argc, char * argv[])
 
 	SparseILU<double> ilu;
 	SparseILU<double>::AdditionalData ad;
-	ad.strengthen_diagonal = 0.05;
+	ad.strengthen_diagonal = 0.5;
 	ilu.initialize(system_matrixs, ad);
-	SolverControl solver_controlG (100000, 1e-13, false);
+	SolverControl solver_controlG (1000000, 1e-13, false);
 
     
-	//solve the Adx = A(u_n)
+	/// 这里调用的是带 ilu 预处理的 GMRES，因为写不出合适的 AMG 预
+	/// 处理，所以严重影响了整体求解效率。
 	SolverGMRES<Vector<double> > gmres(solver_controlG);
 //    gmres.solve (system_matrixs, solutions, rhss, PreconditionIdentity());
+	std::cout << "Newton iteration step begin..." << std::endl;
 	gmres.solve (system_matrixs, solutions, rhss, ilu);
+	std::cout << "Newton iteration step end." << std::endl;
 
     
 	for (int i = 0; i < n_v; i++)
@@ -1087,10 +1079,9 @@ int main(int argc, char * argv[])
 	    solution(i) = p(i - 2 * n_v);
 
 	res = solutions.l2_norm();
-	std::cout << "nolinear res: " << res << std::endl;
+	std::cout << "nolinear res updated: " << res << std::endl;
 	step++;
     }
-    // end circle
     FEMFunction<double, DIM> solution_output(fem_space_output);
     Operator::L2Interpolate(vx, solution_output);
     solution_output.writeOpenDXData("ux.dx");
@@ -1099,16 +1090,10 @@ int main(int argc, char * argv[])
     Operator::L2Interpolate(p, solution_output);
     solution_output.writeOpenDXData("p.dx");
     std::cout << "total it steps:" << step << std::endl;
-//    double errorx = Functional::L2Error(vx, FunctionFunction<double>(&ux), 10);
-//    std::cout << "L2 xError = " << errorx << std::endl;
-//    double errory = Functional::L2Error(vy, FunctionFunction<double>(&uy), 10);
-//    std::cout << "L2 yError = " << errory << std::endl;
-//    double errorp = Functional::L2Error(p, FunctionFunction<double>(&up), 10);
-//    std::cout << "L2 pError = " << errorp << std::endl;
     return 0;
 };
 
-// 真解
+/// 边界条件：
 double ux(const double * p)
 {
     return 1;
@@ -1124,18 +1109,15 @@ double up(const double * p)
     return 0;
 };
 
-// 右端项
+/// 右端项
 double f(const double * p)
 {
     return 0;
 };
 
-// 边界条件
+/// 边界条件
 double zfun(const double * p)
 {
     return 0;
 };
 
-//
-// end of file
-////////////////////////////////////////////////////////////////////////////////////////////

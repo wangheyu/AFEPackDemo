@@ -61,8 +61,8 @@ int main(int argc, char* argv[])
 	/// 一个模板单元内的基函数个数。
 	std::cout << "no. of basis values:" << n_bas << std::endl;
 	/// 该积分点在全部基函数上的取值。
-	// pnt[0] = 1.0;
-	// pnt[1] = -1.0;
+	/// pnt[0] = 0.921132;
+	/// pnt[1] = 0.921132;
 	
 	/// 这里需要给出具体网格信息。因为我们现在看模板单元，所以就给
 	/// 模板单元信息。
@@ -86,49 +86,67 @@ int main(int argc, char* argv[])
     int n = 10;
     double h = (x1 - x0) / n;
     for (int j = 0; j < n; j++)
-	for (int i = 0; i < n; i++)
-	{
-	    double x00 = ((n - i) * x0 + i * x1) / n;
-	    double y00 = ((n - j) * y0 + j * y1) / n;
-	    int idx00 = j * (n + 1) + i; 
-	    double x10 = ((n - i - 1) * x0 + (i + 1) * x1) / n;
-	    double y10 = ((n - j ) * y0 + j * y1) / n;
-	    int idx10 = j * (n + 1) + i + 1; 
-	    double x11 = ((n - i - 1) * x0 + (i + 1) * x1) / n;
-	    double y11 = ((n - j - 1) * y0 + (j + 1) * y1) / n;
-	    int idx11 = (j + 1) * (n + 1) + i + 1; 
-	    double x01 = ((n - i) * x0 + i * x1) / n;
-	    double y01 = ((n - j - 1) * y0 + (j + 1) * y1) / n;
-	    int idx01 = (j + 1) * (n + 1) + i; 
+    	for (int i = 0; i < n; i++)
+    	{
+    	    double x00 = ((n - i) * x0 + i * x1) / n;
+    	    double y00 = ((n - j) * y0 + j * y1) / n;
+    	    int idx00 = j * (n + 1) + i; 
+    	    double x10 = ((n - i - 1) * x0 + (i + 1) * x1) / n;
+    	    double y10 = ((n - j ) * y0 + j * y1) / n;
+    	    int idx10 = j * (n + 1) + i + 1; 
+    	    double x11 = ((n - i - 1) * x0 + (i + 1) * x1) / n;
+    	    double y11 = ((n - j - 1) * y0 + (j + 1) * y1) / n;
+    	    int idx11 = (j + 1) * (n + 1) + i + 1; 
+    	    double x01 = ((n - i) * x0 + i * x1) / n;
+    	    double y01 = ((n - j - 1) * y0 + (j + 1) * y1) / n;
+    	    int idx01 = (j + 1) * (n + 1) + i; 
 	    
-	    int ele_idx = j * n + i;
+    	    int ele_idx = j * n + i;
 
-	    gv[0][0] = x00;
-	    gv[0][1] = y00;
-	    gv[1][0] = x10;
-	    gv[1][1] = y10;
-	    gv[2][0] = x11;
-	    gv[2][1] = y11;
-	    gv[3][0] = x01;
-	    gv[3][1] = y01;
-	    lv[0][0] = arr[0][0];
-	    lv[0][1] = arr[0][1];
-	    lv[1][0] = arr[1][0];
-	    lv[1][1] = arr[1][1];
-	    lv[2][0] = arr[2][0];
-	    lv[2][1] = arr[2][1];
-	    lv[3][0] = arr[3][0];
-	    lv[3][1] = arr[3][1];
-	    std::cout << ele_idx << ": " << std::endl;
-	    std::cout << idx00 << ":(" << x00 << "," << y00 << ") -> "
-	    	      << idx10 << ":(" << x10 << "," << y10 << ") -> "
-	    	      << idx11 << ":(" << x11 << "," << y11 << ") -> "
-	    	      << idx01 << ":(" << x01 << "," << y01 << ")" << std::endl;
-	    /// 现在尝试输出具体每个单元的积分点。
-	    for (int l = 0; l < n_quadrature_point; l++)
-		std::cout << rectangle_coord_transform.local_to_global(q_point[l], lv, gv) << std::endl;
-	    /// TO DO: 计算每个积分点上的基函数梯度值，数值积分，拼装局部刚度矩阵，累加至整体刚度矩阵。
-	}
+    	    gv[0][0] = x00;
+    	    gv[0][1] = y00;
+    	    gv[1][0] = x10;
+    	    gv[1][1] = y10;
+    	    gv[2][0] = x11;
+    	    gv[2][1] = y11;
+    	    gv[3][0] = x01;
+    	    gv[3][1] = y01;
+    	    lv[0][0] = arr[0][0];
+    	    lv[0][1] = arr[0][1];
+    	    lv[1][0] = arr[1][0];
+    	    lv[1][1] = arr[1][1];
+    	    lv[2][0] = arr[2][0];
+    	    lv[2][1] = arr[2][1];
+    	    lv[3][0] = arr[3][0];
+    	    lv[3][1] = arr[3][1];
+    	    std::cout << ele_idx << ": " << std::endl;
+    	    std::cout << idx00 << ":(" << x00 << "," << y00 << ") -> "
+    	    	      << idx10 << ":(" << x10 << "," << y10 << ") -> "
+    	    	      << idx11 << ":(" << x11 << "," << y11 << ") -> "
+    	    	      << idx01 << ":(" << x01 << "," << y01 << ")" << std::endl;
+    	    /// 产生一个具体单元顶点的缓存。
+    	    double ** tarr = (double **) new double* [4];
+    	    for (int i = 0; i < 4; i++)
+    		tarr[i] = (double *) new double [2];
+    	    tarr[0][0] = x00;
+    	    tarr[0][1] = y00;
+    	    tarr[1][0] = x10;
+    	    tarr[1][1] = y10;
+    	    tarr[2][0] = x11;
+    	    tarr[2][1] = y11;
+    	    tarr[3][0] = x01;
+    	    tarr[3][1] = y01;
+
+    	    /// 现在尝试输出具体每个单元的积分点。
+    	    for (int l = 0; l < n_quadrature_point; l++)
+    	    {
+    		std::cout << rectangle_coord_transform.local_to_global(q_point[l], lv, gv) << std::endl;
+		AFEPack::Point<2> pnt = rectangle_coord_transform.local_to_global(q_point[l], lv, gv);
+    		for (int k = 0; k < n_bas; k++)
+    		    std::cout << rectangle_basis_function[k].value(pnt, (const double**)tarr) << std::endl;
+    	    }
+    	    /// TO DO: 计算每个积分点上的基函数梯度值，数值积分，拼装局部刚度矩阵，累加至整体刚度矩阵。
+    	}
     /// 边界条件。
     /// 矩阵求解。
     return 0;

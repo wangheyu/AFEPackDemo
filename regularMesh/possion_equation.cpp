@@ -34,17 +34,38 @@
 double u(const double * p)
 {
     return sin(PI * p[0]) * sin(PI * p[1]);
-    //return exp( 2 * p[0] + p[1] );
 };
 
 double f(const double * p)
 {
     return 2 * PI * PI * u(p);
-    //return -5 * u( p );
 }; 
 
-/// good! 
-typedef std::unordered_map<unsigned int, int> index_map;
+/// 从 j 行 i 列，每一列 n 个网格的 Q1 剖分中映射 (i, j) 单元的第 k 个
+/// 自由度的全局编号。
+int Q1_ele2dof(int n, int j, int i, int k)
+{
+    int idx = -1;
+    switch (k)
+    {
+    case 0 :
+	idx = j * (n + 1) + i;
+	break;
+    case 1:
+	idx = j * (n + 1) + i + 1;
+	break;
+    case 2:
+	idx = (j + 1) * (n + 1) + i + 1;
+	break;
+    case 3:
+	idx = (j + 1) * (n + 1) + i;
+	break;
+    default:
+	std::cerr << "Dof. no. error!" << std::endl;
+	exit(-1);
+    }
+    return idx;
+};
 
 int main(int argc, char* argv[])
 {
@@ -82,18 +103,10 @@ int main(int argc, char* argv[])
     for (int i = 0; i < 4; i++)
 	arr[i] = (double *) new double [2];
     std::vector<AFEPack::Point<2> > gv(4);
-    std::vector<AFEPack::Point<2> > lv(4);
-
     /// 观察一下模板单元中的自由度、基函数和基函数在具体积分点取值的情
-    /// 况。
-    arr[0][0] = -1.0;
-    arr[0][1] = -1.0;
-    arr[1][0] = 1.0;
-    arr[1][1] = -1.0;
-    arr[2][0] = 1.0;
-    arr[2][1] = 1.0;
-    arr[3][0] = -1.0;
-    arr[3][1] = 1.0;
+    /// 况。这一段应该可以从单元模板中读取到。
+    TemplateGeometry<2> &geo = template_element.geometry();
+    const std::vector<AFEPack::Point<2> > &lv = geo.vertexArray();
     /// 设置实际的计算矩形区域边界。
     double x0 = 0.0;	
     double y0 = 0.0;
@@ -130,24 +143,11 @@ int main(int argc, char* argv[])
     for (int j = 0; j < n; j++)
 	for (int i = 0; i < n; i++)
 	{
-	    /// 对每一个 (j, i) 的自由度，对应矩阵中产生的非零元是：
-	    /// (j, i) -> j * (n + 1) + i;
-	    /// (j, i + 1) -> j * (n + 1) + i + 1;
-	    /// (j + 1, i + 1) -> (j + 1) * (n + 1) + i + 1;
-	    /// (j + 1, i) -> (j + 1) * (n + 1) + i;
-	    int idx00 = j * (n + 1) + i; 
-	    int idx10 = j * (n + 1) + i + 1; 
-	    int idx11 = (j + 1) * (n + 1) + i + 1; 
-	    int idx01 = (j + 1) * (n + 1) + i;
-
-	    /// 这里应该是为了尽可能使用 template_element 中的信息，所
-	    /// 以采用了一个 index_map，不过这里本质上可以使用的信息只
-	    /// 有 n_dof，也就是 4，所以似乎没有这个必要？index_map 应
-	    /// 该是个不错的配置，这里不如直接用 4？
-	    index_map index({{0, idx00}, {1, idx10}, {2, idx11}, {3, idx01}}, template_element.n_dof());
-	    for (int i = 0;i < template_element.n_dof(); i++)
-		for (int j = 0;j < template_element.n_dof(); j++)
-		    sp_stiff_matrix.add(index[i], index[j]);
+	    int n_dof = template_element.n_dof();
+	    for (int dof1 = 0; dof1 < n_dof; dof1++)
+		for (int dof2 = 0; dof2 < n_dof; dof2++)
+		    sp_stiff_matrix.add(Q1_ele2dof(n, j, i, dof1),
+					Q1_ele2dof(n, j, i, dof2));
 	}
     /// 稀疏矩阵模板生成。
     sp_stiff_matrix.compress();
@@ -163,16 +163,12 @@ int main(int argc, char* argv[])
 	    /// 标也是。
 	    double x00 = ((n - i) * x0 + i * x1) / n;
 	    double y00 = ((n - j) * y0 + j * y1) / n;
-	    int idx00 = j * (n + 1) + i; 
 	    double x10 = ((n - i - 1) * x0 + (i + 1) * x1) / n;
 	    double y10 = ((n - j ) * y0 + j * y1) / n;
-	    int idx10 = j * (n + 1) + i + 1; 
 	    double x11 = ((n - i - 1) * x0 + (i + 1) * x1) / n;
 	    double y11 = ((n - j - 1) * y0 + (j + 1) * y1) / n;
-	    int idx11 = (j + 1) * (n + 1) + i + 1; 
 	    double x01 = ((n - i) * x0 + i * x1) / n;
 	    double y01 = ((n - j - 1) * y0 + (j + 1) * y1) / n;
-	    int idx01 = (j + 1) * (n + 1) + i; 
 	    
 	    /// 这里数据赋值继承了我的测试代码，有点生硬。这里 gv 应该
 	    /// 做到现场生成，也就是上面的 x00 等等可以直接生成在 gv，
@@ -185,14 +181,7 @@ int main(int argc, char* argv[])
 	    gv[2][1] = y11;
 	    gv[3][0] = x01;
 	    gv[3][1] = y01;
-	    lv[0][0] = arr[0][0];
-	    lv[0][1] = arr[0][1];
-	    lv[1][0] = arr[1][0];
-	    lv[1][1] = arr[1][1];
-	    lv[2][0] = arr[2][0];
-	    lv[2][1] = arr[2][1];
-	    lv[3][0] = arr[3][0];
-	    lv[3][1] = arr[3][1];
+
 	    /// 现在尝试输出具体每个单元的积分点。
 	    /// 合成整体刚度矩阵
 	    /// 6----7----8
@@ -212,19 +201,17 @@ int main(int argc, char* argv[])
 		auto point = rectangle_coord_transform.local_to_global(q_point, lv, gv);
 		/// 积分点的权重、Jacobi变换系数。
 		double Jxy = quad_info.weight(l) * rectangle_coord_transform.local_to_global_jacobian(q_point[l], lv, gv) * volume;
-		index_map index({{0, idx00}, {1, idx10}, {2, idx11}, {3, idx01}}, template_element.n_dof());
 		/// 这一段不错。
 		for(int base1 = 0; base1 < template_element.n_dof(); base1++)
 		{
 		    for(int base2 = 0; base2 < template_element.n_dof(); base2++)
-			stiff_mat.add(index[base1],
-				      index[base2],
+			stiff_mat.add(Q1_ele2dof(n, j, i, base1),
+				      Q1_ele2dof(n, j, i, base2),
 				      Jxy * innerProduct(rectangle_basis_function[base1].gradient(point[l], gv),
 							 rectangle_basis_function[base2].gradient(point[l], gv)));
-		    rhs(index[base1]) += Jxy * f(point[l]) * rectangle_basis_function[base1].value(point[l], gv);
+		    rhs(Q1_ele2dof(n, j, i, base1)) += Jxy * f(point[l]) * rectangle_basis_function[base1].value(point[l], gv);
 		}
 	    }
-	    /// TO DO: 计算每个积分点上的基函数梯度值，数值积分，拼装局部刚度矩阵，累加至整体刚度矩阵。
 	}
     ///处理所有边界条件
     for(unsigned int index = 0; index < dim; index++)

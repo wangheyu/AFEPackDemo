@@ -6,7 +6,9 @@ source = $(wildcard *.cpp)
 object = $(patsubst %.cpp, %.o, $(source))
 LDFLAGS += -L/usr/local/AFEPack/library/lib -lAFEPack
 
-#all : 
+all : $(object)
+	$(CXX) -o main *.o $(LDFLAGS) $(LIBS)
+
 
 %.o : %.cpp
 	$(CXX) -c -o $@ $< $(CXXFLAGS)

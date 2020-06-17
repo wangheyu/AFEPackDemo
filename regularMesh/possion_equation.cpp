@@ -67,6 +67,39 @@ int Q1_ele2dof(int n, int j, int i, int k)
     return idx;
 };
 
+
+AFEPack::Point<2> Q1_ele2vtx(int n, int j, int i, int k)
+{
+    double x0 = 0.0;	
+    double y0 = 0.0;
+    double x1 = 1.0;
+    double y1 = 1.0;
+    AFEPack::Point<2> pnt;
+    switch (k)
+    {
+    case 0:
+	pnt[0] = ((n - i) * x0 + i * x1) / n;
+	pnt[1] = ((n - j) * y0 + j * y1) / n;
+	break;
+    case 1:
+	pnt[0] = ((n - i - 1) * x0 + (i + 1) * x1) / n;
+	pnt[1] = ((n - j ) * y0 + j * y1) / n;
+	break;
+    case 2:
+	pnt[0] = ((n - i - 1) * x0 + (i + 1) * x1) / n;
+	pnt[1] = ((n - j - 1) * y0 + (j + 1) * y1) / n;
+	break;
+    case 3:
+	pnt[0] = ((n - i) * x0 + i * x1) / n;
+	pnt[1] = ((n - j - 1) * y0 + (j + 1) * y1) / n;
+	break;
+    default:
+	std::cerr << "Element vertex no. error!" << std::endl;
+	exit(-1);
+    }
+    return pnt;
+};
+
 int main(int argc, char* argv[])
 {
     /// 这里基本上和 possion_equation 中配置一致。对比
@@ -99,14 +132,12 @@ int main(int argc, char* argv[])
     /// 标，就是在物理计算区域内一个网格的顶点坐标；而 lv 表示局部的矩
     /// 形坐标，即参考单元的坐标。沿用了 AFEPack 的配置，是固定的 [-1,
     /// -1]-[-1, 1]-[1, 1]-[-1, 1]。
-    double ** arr = (double **) new double* [4];
-    for (int i = 0; i < 4; i++)
-	arr[i] = (double *) new double [2];
     std::vector<AFEPack::Point<2> > gv(4);
     /// 观察一下模板单元中的自由度、基函数和基函数在具体积分点取值的情
     /// 况。这一段应该可以从单元模板中读取到。
     TemplateGeometry<2> &geo = template_element.geometry();
     const std::vector<AFEPack::Point<2> > &lv = geo.vertexArray();
+    int n_vtx = geo.n_geometry(0);
     /// 设置实际的计算矩形区域边界。
     double x0 = 0.0;	
     double y0 = 0.0;
@@ -114,7 +145,7 @@ int main(int argc, char* argv[])
     double y1 = 1.0;
     /// 设置剖分断数和节点总数。
     int n = 20;
-    /// 这里 dim 相当与总自由度数。
+    /// 这里 dim 相当于总自由度数。
     int dim = (n + 1) * (n + 1);
 
     Vector<double> rhs(dim);
@@ -158,42 +189,9 @@ int main(int argc, char* argv[])
     for (int j = 0; j < n; j++)
 	for (int i = 0; i < n; i++)
 	{
-	    /// 这里第二次出现了同样的 map，所以应该将这个 map 写成一
-	    /// 个全局的函数或数据结构，以方便调用。实际上，各自由度坐
-	    /// 标也是。
-	    double x00 = ((n - i) * x0 + i * x1) / n;
-	    double y00 = ((n - j) * y0 + j * y1) / n;
-	    double x10 = ((n - i - 1) * x0 + (i + 1) * x1) / n;
-	    double y10 = ((n - j ) * y0 + j * y1) / n;
-	    double x11 = ((n - i - 1) * x0 + (i + 1) * x1) / n;
-	    double y11 = ((n - j - 1) * y0 + (j + 1) * y1) / n;
-	    double x01 = ((n - i) * x0 + i * x1) / n;
-	    double y01 = ((n - j - 1) * y0 + (j + 1) * y1) / n;
-	    
-	    /// 这里数据赋值继承了我的测试代码，有点生硬。这里 gv 应该
-	    /// 做到现场生成，也就是上面的 x00 等等可以直接生成在 gv，
-	    /// 而 lv 则应该是外部赋值的全局数据。
-	    gv[0][0] = x00;
-	    gv[0][1] = y00;
-	    gv[1][0] = x10;
-	    gv[1][1] = y10;
-	    gv[2][0] = x11;
-	    gv[2][1] = y11;
-	    gv[3][0] = x01;
-	    gv[3][1] = y01;
+	    for (int k = 0; k < n_vtx; k++)
+		gv[0] = Q1_ele2vtx(n, j, i, k);
 
-	    /// 现在尝试输出具体每个单元的积分点。
-	    /// 合成整体刚度矩阵
-	    /// 6----7----8
-	    ///	|    |    |
-	    ///	3----4----5     
-	    /// |    |    |
-	    ///	0----1----2
-	    ///
-	    /// element 1:0->1->4->3
-	    /// element 2:1->2->5->4
-	    /// element 3:3->4->7->6
-	    /// element 4:4->5->8->7
 	    /// 这里确实应该考虑一下单元、自由度之间的编号对应关系。
 	    for (int l = 0; l < n_quadrature_point; l++)
 	    {
